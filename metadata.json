@@ -1,0 +1,5 @@
+{
+  "name": "Formulario de Gestión de Usuarios",
+  "description": "Una aplicación web para crear, buscar y actualizar registros de usuarios con validación de campos, utilizando React, TypeScript, Zustand y Tailwind CSS.",
+  "requestFramePermissions": []
+}
