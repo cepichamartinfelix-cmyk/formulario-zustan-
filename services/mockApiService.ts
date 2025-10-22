@@ -1,5 +1,5 @@
-
 import type { User } from '../types';
+import type { IApiService } from './apiTypes';
 
 // Simulating a database
 let users: User[] = [
@@ -12,28 +12,29 @@ const simulateDelay = <T,>(data: T): Promise<T> => {
     return new Promise(resolve => setTimeout(() => resolve(data), 700));
 };
 
-export const mockApiService = {
-  searchUser: (id: number): Promise<User | null> => {
-    console.log(`Searching for user with id: ${id}`);
+class MockApiService implements IApiService {
+  async searchUser(id: number): Promise<User | null> {
+    console.log(`(Mock) Searching for user with id: ${id}`);
     const user = users.find(u => u.id === id) || null;
     return simulateDelay(user);
-  },
+  }
 
-  createUser: (userData: Omit<User, 'id'>): Promise<User> => {
-    console.log('Creating new user:', userData);
+  async createUser(userData: Omit<User, 'id'>): Promise<User> {
+    console.log('(Mock) Creating new user:', userData);
     const newUser: User = { ...userData, id: nextId++ };
     users.push(newUser);
     return simulateDelay(newUser);
-  },
+  }
 
-  updateUser: (userData: User): Promise<User> => {
-    console.log('Updating user:', userData);
+  async updateUser(userData: User): Promise<User> {
+    console.log('(Mock) Updating user:', userData);
     const userIndex = users.findIndex(u => u.id === userData.id);
     if (userIndex !== -1) {
       users[userIndex] = { ...users[userIndex], ...userData };
       return simulateDelay(users[userIndex]);
     }
     return Promise.reject(new Error('User not found for update'));
-  },
-};
-   
+  }
+}
+
+export const mockApiService = new MockApiService();

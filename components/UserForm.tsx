@@ -1,7 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
-import type { UserFormData, FormErrors } from '../types';
-import { useUserStore } from '../store/userStore';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { UserFormData, FormErrors, User } from '../types';
+import apiService from '../services/apiService';
 import InputField from './InputField';
 import Button from './Button';
 
@@ -12,21 +12,90 @@ const INITIAL_FORM_STATE: UserFormData = {
   score: 0,
 };
 
+// Componente para mostrar notificaciones
+const Notification = ({ message, type, onDismiss }: { message: string; type: 'success' | 'error'; onDismiss: () => void; }) => {
+  const baseClasses = "mb-4 p-3 border rounded-md flex justify-between items-center";
+  const typeClasses = {
+    success: "bg-green-100 dark:bg-green-900 border-green-400 dark:border-green-600 text-green-700 dark:text-green-200",
+    error: "bg-red-100 dark:bg-red-900 border-red-400 dark:border-red-600 text-red-700 dark:text-red-200",
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 5000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div className={`${baseClasses} ${typeClasses[type]}`}>
+      <span>{message}</span>
+      <button onClick={onDismiss} className="font-bold text-lg">&times;</button>
+    </div>
+  );
+};
+
+
 const UserForm: React.FC = () => {
   const [formData, setFormData] = useState<UserFormData>(INITIAL_FORM_STATE);
   const [errors, setErrors] = useState<FormErrors>({});
   const [isUpdating, setIsUpdating] = useState(false);
-  
-  const { isSearching, isSubmitting, searchUser, saveUser, clearMessages, error, successMessage } = useUserStore();
+  const [searchId, setSearchId] = useState('');
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  useEffect(() => {
-    if (successMessage || error) {
-      const timer = setTimeout(() => {
-        clearMessages();
-      }, 5000);
-      return () => clearTimeout(timer);
+  const queryClient = useQueryClient();
+
+  // Query para buscar un usuario. Deshabilitada por defecto.
+  const { isFetching: isSearching, refetch: executeSearch } = useQuery({
+    queryKey: ['user', searchId],
+    queryFn: () => apiService.searchUser(parseInt(searchId, 10)),
+    enabled: false, // Solo se ejecuta al llamar a refetch
+    retry: false,
+    onSuccess: (data) => {
+      if (data) {
+        setFormData({
+          id: String(data.id),
+          name: data.name,
+          dob: data.dob,
+          score: data.score,
+        });
+        setIsUpdating(true);
+        setNotification({ type: 'success', message: `Usuario encontrado: ${data.name}` });
+      } else {
+        setNotification({ type: 'error', message: 'Usuario no encontrado.' });
+        setIsUpdating(false);
+      }
+    },
+    onError: (error) => {
+      setNotification({ type: 'error', message: error.message });
+      setIsUpdating(false);
     }
-  }, [successMessage, error, clearMessages]);
+  });
+  
+  // Mutación para crear un usuario
+  const createUserMutation = useMutation({
+    mutationFn: (newUser: Omit<User, 'id'>) => apiService.createUser(newUser),
+    onSuccess: (newUser) => {
+      setNotification({ type: 'success', message: `Usuario ${newUser.name} creado con éxito. Nuevo ID: ${newUser.id}` });
+      handleReset(); // Limpia el formulario después de crear
+    },
+    onError: (error) => {
+      setNotification({ type: 'error', message: `Error al crear: ${error.message}` });
+    },
+  });
+
+  // Mutación para actualizar un usuario
+  const updateUserMutation = useMutation({
+    mutationFn: (updatedUser: User) => apiService.updateUser(updatedUser),
+    onSuccess: (updatedUser) => {
+      setNotification({ type: 'success', message: `Usuario ${updatedUser.name} actualizado con éxito.` });
+      // Invalida la query para que la próxima búsqueda obtenga los datos frescos
+      queryClient.invalidateQueries({ queryKey: ['user', String(updatedUser.id)] });
+    },
+    onError: (error) => {
+      setNotification({ type: 'error', message: `Error al actualizar: ${error.message}` });
+    },
+  });
+
+  const isSubmitting = createUserMutation.isPending || updateUserMutation.isPending;
 
   const validate = (): boolean => {
     const newErrors: FormErrors = {};
@@ -49,52 +118,50 @@ const UserForm: React.FC = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { id, value } = e.target;
-    setFormData(prev => ({ ...prev, [id]: value }));
+    // Maneja el campo de búsqueda de ID por separado
+    if (id === 'id-search') {
+        setSearchId(value);
+    } else {
+        setFormData(prev => ({ ...prev, [id]: value }));
+    }
   };
 
   const handleReset = () => {
     setFormData(INITIAL_FORM_STATE);
+    setSearchId('');
     setErrors({});
     setIsUpdating(false);
-    clearMessages();
+    setNotification(null);
   };
 
-  const handleSearch = async () => {
-    const id = parseInt(formData.id, 10);
+  const handleSearch = () => {
+    const id = parseInt(searchId, 10);
     if (isNaN(id) || id <= 0) {
-        setErrors(prev => ({ ...prev, id: 'Por favor, ingrese un ID numérico válido para buscar.' }));
-        return;
+      setErrors({ id: 'Por favor, ingrese un ID numérico válido para buscar.' });
+      return;
     }
     setErrors({});
-    const user = await searchUser(id);
-    if (user) {
-      setFormData({
-        id: String(user.id),
-        name: user.name,
-        dob: user.dob,
-        score: user.score,
-      });
-      setIsUpdating(true);
-    } else {
-      setIsUpdating(false);
-    }
+    setNotification(null);
+    executeSearch();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setNotification(null);
     if (validate()) {
-      const userToSave = {
-        name: formData.name,
-        dob: formData.dob,
-        score: Number(formData.score),
-        ...(isUpdating && { id: Number(formData.id) }),
-      };
-      
-      const result = await saveUser(userToSave);
-      if (result) {
-        if (!isUpdating) { // if creating
-           handleReset();
-        }
+      if (isUpdating) {
+        updateUserMutation.mutate({
+          id: Number(formData.id),
+          name: formData.name,
+          dob: formData.dob,
+          score: Number(formData.score),
+        });
+      } else {
+        createUserMutation.mutate({
+          name: formData.name,
+          dob: formData.dob,
+          score: Number(formData.score),
+        });
       }
     }
   };
@@ -105,25 +172,22 @@ const UserForm: React.FC = () => {
         {isUpdating ? 'Actualizar Usuario' : 'Registro de Usuario'}
       </h2>
       
-      {successMessage && (
-        <div className="mb-4 p-3 bg-green-100 dark:bg-green-900 border border-green-400 dark:border-green-600 text-green-700 dark:text-green-200 rounded-md">
-          {successMessage}
-        </div>
-      )}
-      {error && (
-        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-200 rounded-md">
-          {error}
-        </div>
+      {notification && (
+        <Notification 
+          message={notification.message} 
+          type={notification.type} 
+          onDismiss={() => setNotification(null)}
+        />
       )}
 
       <form onSubmit={handleSubmit} noValidate>
         <div className="flex items-start gap-4 mb-4">
           <div className="flex-grow">
             <InputField
-              id="id"
+              id="id-search"
               label="Buscar por ID de Usuario"
               type="number"
-              value={formData.id}
+              value={searchId}
               onChange={handleInputChange}
               placeholder="Ej: 1"
               error={errors.id}
@@ -132,9 +196,10 @@ const UserForm: React.FC = () => {
           <div className="mt-8">
             <Button
               onClick={handleSearch}
-              disabled={isSearching || !formData.id}
+              disabled={isSearching || !searchId}
               isLoading={isSearching}
               variant="secondary"
+              type="button"
             >
               Buscar
             </Button>
@@ -196,4 +261,3 @@ const UserForm: React.FC = () => {
 };
 
 export default UserForm;
-   
